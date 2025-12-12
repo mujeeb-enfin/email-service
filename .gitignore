@@ -1,0 +1,94 @@
+# -----------------------------------------------------
+# CodeIgniter 4 Core Ignored Files / Folders
+# -----------------------------------------------------
+
+# Environment file (never commit)
+.env
+.env.* 
+
+# Writable directory contents
+writable/cache/*
+writable/logs/*
+writable/session/*
+writable/uploads/*
+writable/debugbar/*
+writable/tmp/*
+writable/file_uploads/*
+writable/email-attachments/*
+
+# EXCEPT keep index.html files inside folders (CI4 requires)
+!writable/cache/index.html
+!writable/logs/index.html
+!writable/session/index.html
+!writable/uploads/index.html
+!writable/debugbar/index.html
+!writable/tmp/index.html
+!writable/file_uploads/index.html
+!writable/email-attachments/index.html
+
+# -----------------------------------------------------
+# Composer & Vendor
+# -----------------------------------------------------
+
+vendor/
+composer.lock
+
+# -----------------------------------------------------
+# IDE / Editor Files
+# -----------------------------------------------------
+
+# PHPStorm / IntelliJ
+.idea/
+
+# VSCode
+.vscode/
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# Code workspace backups
+*.code-workspace
+
+# -----------------------------------------------------
+# System & OS Files
+# -----------------------------------------------------
+
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# -----------------------------------------------------
+# Node (if frontend assets exist)
+# -----------------------------------------------------
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# -----------------------------------------------------
+# Log files
+# -----------------------------------------------------
+*.log
+
+# -----------------------------------------------------
+# PHPUnit cache
+# -----------------------------------------------------
+.phpunit.result.cache
+
+# -----------------------------------------------------
+# Build / Temp Files
+# -----------------------------------------------------
+*.cache
+*.swp
+*.bak
+*.tmp
+
+# -----------------------------------------------------
+# FTP/Deployment artifacts
+# -----------------------------------------------------
+*.zip
+*.tar
+*.gz
+*.7z
