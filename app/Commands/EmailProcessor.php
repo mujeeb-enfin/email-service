@@ -6,6 +6,7 @@ use CodeIgniter\CLI\BaseCommand;
 use CodeIgniter\CLI\CLI;
 use App\Libraries\RabbitMQLibrary;
 use App\Models\EmailQueueModel;
+use App\Models\EmailTemplateModel;
 use App\Models\EmailQueueLogModel;
 use PhpAmqpLib\Message\AMQPMessage;
 
@@ -18,6 +19,7 @@ class EmailProcessor extends BaseCommand
 
     private $rabbitMQ;
     private $emailQueueModel;
+    private $emailTemplateModel;
 
     public function run(array $params)
     {
@@ -26,6 +28,7 @@ class EmailProcessor extends BaseCommand
 
         $this->rabbitMQ = new RabbitMQLibrary();
         $this->emailQueueModel = new EmailQueueModel();
+        $this->emailTemplateModel = new EmailTemplateModel();
 
         try {
             $this->rabbitMQ->consume(function (AMQPMessage $message) {
@@ -65,6 +68,23 @@ class EmailProcessor extends BaseCommand
                 return;
             }
 
+            $emailTemplate =  $this->emailTemplateModel->find($emailData['eq_template_id']);
+
+            if (!empty($emailTemplate)) {
+                $body = $emailTemplate['et_body'];  // Template with placeholders
+                $variables = json_decode($emailTemplate['et_variables'], true); // ["name", "email", "company_name"]
+                $payload = json_decode($email['eq_payload'], true); // {"name":"John Doe", "email":"email2thanveer@gmail.com", "company_name":"Acme Corporation"}
+
+                if (!empty($variables) && !empty($payload)) {
+                    foreach ($variables as $var) {
+                        // Replace {{variable}} with actual value from payload
+                        $body = str_replace('{{' . $var . '}}', $payload[$var] ?? '', $body);
+                    }
+                }
+
+                $email['eq_body'] = $body;
+            }
+
             // Update status to processing
             $this->emailQueueModel->update($emailId, [
                 'eq_email_status' => 'processing'
@@ -74,7 +94,7 @@ class EmailProcessor extends BaseCommand
             $this->logEmail($emailId, 'processing', 'Email processing started');
 
             // Send email
-            // $result = $this->sendEmail($email);
+            $result = $this->sendEmail($email, $emailId);
 
             $result = array();
             $result['success'] = true;
@@ -112,75 +132,80 @@ class EmailProcessor extends BaseCommand
     /**
      * Send email via SMTP
      */
-    private function sendEmail($email)
+    private function sendEmail($email, $emailId = 0)
     {
+        CLI::write("Start processing Email ID " . $emailId, 'yellow');
+
         try {
             $emailService = \Config\Services::email();
 
-            // Configure email
-            $config['protocol'] = 'smtp';
-            $config['SMTPHost'] = getenv('SMTP_HOST');
-            $config['SMTPPort'] = getenv('SMTP_PORT');
-            $config['SMTPUser'] = getenv('SMTP_USER');
-            $config['SMTPPass'] = getenv('SMTP_PASS');
-            $config['SMTPCrypto'] = getenv('SMTP_CRYPTO') ?? 'tls';
-            $config['mailType'] = 'html';
-            $config['charset'] = 'utf-8';
-            $config['newline'] = "\r\n";
-
+            // Email config
+            $config = [
+                'protocol'    => 'smtp',
+                'SMTPHost'    => env('SMTP_HOST'),
+                'SMTPPort'    => (int) env('SMTP_PORT'),
+                'SMTPUser'    => env('SMTP_USER'),
+                'SMTPPass'    => env('SMTP_PASS'),
+                'SMTPCrypto'  => env('SMTP_CRYPTO', 'tls'),
+                'mailType'    => 'html',  // HTML type
+                'charset'     => 'utf-8',
+                'newline'     => "\r\n",
+            ];
             $emailService->initialize($config);
 
-            // Set email parameters
-            $from = $email['eq_from_email'] ?? getenv('SMTP_FROM_EMAIL');
-            $emailService->setFrom($from, getenv('SMTP_FROM_NAME') ?? 'System');
-            
-            // Handle multiple recipients
-            $to = $this->parseRecipients($email['eq_recipient_to']);
-            $emailService->setTo($to);
+            // From
+            $fromEmail = $email['eq_from_email'] ?? env('SMTP_FROM_EMAIL');
+            $fromName  = env('SMTP_FROM_NAME', 'System');
+            if (empty($fromEmail)) throw new \RuntimeException('From email not configured');
+            $emailService->setFrom($fromEmail, $fromName);
 
-            if (!empty($email['eq_recipient_cc'])) {
-                $cc = $this->parseRecipients($email['eq_recipient_cc']);
-                $emailService->setCC($cc);
-            }
+            // To / CC / BCC
+            $emailService->setTo($this->parseRecipients($email['eq_recipient_to']));
+            if (!empty($email['eq_recipient_cc'])) $emailService->setCC($this->parseRecipients($email['eq_recipient_cc']));
+            if (!empty($email['eq_recipient_bcc'])) $emailService->setBCC($this->parseRecipients($email['eq_recipient_bcc']));
 
-            if (!empty($email['eq_recipient_bcc'])) {
-                $bcc = $this->parseRecipients($email['eq_recipient_bcc']);
-                $emailService->setBCC($bcc);
-            }
+            // Subject
+            $emailService->setSubject((string) ($email['eq_subject'] ?? 'No Subject'));
 
-            $emailService->setSubject($email['eq_subject']);
-            $emailService->setMessage($email['eq_body'] ?? '');
+            // ✅ Message **before attachments**
+            $emailService->setMessage((string) ($email['eq_body'] ?? ""));
 
-            // Handle attachments
+            // $debug = $emailService->printDebugger($email);
+            // CLI::write("Email ID {$emailId} failed with details: " . PHP_EOL . $debug, 'yellow');
+
+            // Attachments **after** setting the message
             if (!empty($email['eq_attachments'])) {
                 $attachments = json_decode($email['eq_attachments'], true);
-                foreach ($attachments as $attachment) {
-                    if (file_exists($attachment)) {
-                        $emailService->attach($attachment);
+                if (is_array($attachments)) {
+                    foreach ($attachments as $attachment) {
+                        if (is_string($attachment) && file_exists($attachment)) {
+                            $emailService->attach($attachment);
+                        }
                     }
                 }
             }
 
-            // Send email
+            // Send
             if ($emailService->send()) {
+                CLI::write("Email ID " . $emailId . " sent successfully", 'green');
                 return [
                     'success' => true,
-                    'message_id' => $emailService->printDebugger(['headers'])
-                ];
-            } else {
-                return [
-                    'success' => false,
-                    'error' => $emailService->printDebugger(['headers', 'subject', 'body'])
+                    'message_id' => $emailService->printDebugger(['headers']),
                 ];
             }
 
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
-            ];
+            $debug = $emailService->printDebugger(['headers','subject','body','smtp']);
+            CLI::write("Email ID {$emailId} failed: " . PHP_EOL . $debug, 'red');
+
+            return ['success' => false, 'error' => $debug];
+
+        } catch (\Throwable $e) {
+            CLI::write("Email ID {$emailId} failed with exception: " . $e->getMessage(), 'red');
+            return ['success' => false, 'error' => $e->getMessage()];
         }
     }
+
+
 
     /**
      * Handle email sending failure

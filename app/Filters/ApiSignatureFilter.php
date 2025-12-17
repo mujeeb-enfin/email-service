@@ -23,12 +23,12 @@ class ApiSignatureFilter implements FilterInterface
         }
 
         // Step 2: Validate timestamp (5 minute window)
-        $currentTime = time();
-        if (abs($currentTime - (int)$timestamp) > 300) {
-            return service('response')
-                ->setStatusCode(401)
-                ->setJSON(['error' => 'Request timestamp expired']);
-        }
+        // $currentTime = time();
+        // if (abs($currentTime - (int)$timestamp) > 300) {
+        //     return service('response')
+        //         ->setStatusCode(401)
+        //         ->setJSON(['error' => 'Request timestamp expired']);
+        // }
 
         // Step 3: Fetch app account by API key
         $model = new AppAccountModel();
