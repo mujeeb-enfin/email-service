@@ -8,6 +8,7 @@ use App\Libraries\RabbitMQLibrary;
 use App\Models\EmailQueueModel;
 use App\Models\EmailTemplateModel;
 use App\Models\EmailQueueLogModel;
+use App\Models\MessageBodyModel;
 use PhpAmqpLib\Message\AMQPMessage;
 
 class EmailProcessor extends BaseCommand
@@ -20,6 +21,7 @@ class EmailProcessor extends BaseCommand
     private $rabbitMQ;
     private $emailQueueModel;
     private $emailTemplateModel;
+    private $messageBodyModel;
 
     public function run(array $params)
     {
@@ -29,6 +31,7 @@ class EmailProcessor extends BaseCommand
         $this->rabbitMQ = new RabbitMQLibrary();
         $this->emailQueueModel = new EmailQueueModel();
         $this->emailTemplateModel = new EmailTemplateModel();
+        $this->messageBodyModel = new MessageBodyModel();
 
         try {
             $this->rabbitMQ->consume(function (AMQPMessage $message) {
@@ -48,11 +51,11 @@ class EmailProcessor extends BaseCommand
     {
         try {
             $emailData = json_decode($message->body, true);
-            $emailId = $emailData['id'];
+            $emailId   = $emailData['id'];
 
             CLI::write("Processing Email ID: {$emailId}", 'cyan');
 
-            // Get latest email data from database
+            // Fetch email queue record
             $email = $this->emailQueueModel->find($emailId);
 
             if (!$email) {
@@ -68,6 +71,22 @@ class EmailProcessor extends BaseCommand
                 return;
             }
 
+            // Fetch email body from message_body table
+            $messageBody = $this->messageBodyModel
+                ->where('email_queue_id', $emailId)
+                ->first();
+
+            if (!$messageBody) {
+                CLI::error("Email body not found for Email ID {$emailId}");
+                $this->handleFailure(
+                    $emailId,
+                    $email,
+                    'Email body missing',
+                    $message
+                );
+                return;
+            }
+
             // Update status to processing
             $this->emailQueueModel->update($emailId, [
                 'eq_email_status' => 'processing'
@@ -76,38 +95,46 @@ class EmailProcessor extends BaseCommand
             // Log processing start
             $this->logEmail($emailId, 'processing', 'Email processing started');
 
-            // Send email
-            $result = $this->sendEmail($email, $emailId);
+            // Send email (PASS BODY EXPLICITLY)
+            $result = $this->sendEmail(
+                $email,
+                $messageBody['message_body'],
+                $emailId
+            );
 
-            $result = array();
-            $result['success'] = true;
-            $min = 1000000000;
-            $max = 9999999999;
-            $result['message_id'] = random_int($min, $max);
-            
-            if ($result['success']) {
+            if (!empty($result['success'])) {
                 // Update to sent
                 $this->emailQueueModel->update($emailId, [
                     'eq_email_status' => 'sent',
-                    'eq_sent_at' => date('Y-m-d H:i:s'),
-                    'eq_message_id' => $result['message_id'] ?? null
+                    'eq_sent_at'      => date('Y-m-d H:i:s'),
+                    'eq_message_id'   => $result['message_id'] ?? null
                 ]);
 
-                $this->logEmail($emailId, 'sent', 'Email sent successfully', $result['message_id'] ?? null);
-                
+                $this->logEmail(
+                    $emailId,
+                    'sent',
+                    'Email sent successfully',
+                    $result['message_id'] ?? null
+                );
+
                 CLI::write("Email ID {$emailId} sent successfully", 'green');
                 $message->ack();
 
             } else {
                 // Handle failure
-                $this->handleFailure($emailId, $email, $result['error'], $message);
+                $this->handleFailure(
+                    $emailId,
+                    $email,
+                    $result['error'] ?? 'Unknown error',
+                    $message
+                );
             }
 
         } catch (\Exception $e) {
             CLI::error('Processing Error: ' . $e->getMessage());
             log_message('error', 'Email Processing Error: ' . $e->getMessage());
-            
-            // Reject and requeue the message
+
+            // Requeue message
             $message->nack(true);
         }
     }
@@ -115,7 +142,7 @@ class EmailProcessor extends BaseCommand
     /**
      * Send email via SMTP
      */
-    private function sendEmail($email, $emailId = 0)
+    private function sendEmail($email, $body = null, $emailId = 0)
     {
         CLI::write("Start processing Email ID " . $emailId, 'yellow');
 
@@ -151,7 +178,7 @@ class EmailProcessor extends BaseCommand
             $emailService->setSubject((string) ($email['eq_subject'] ?? 'No Subject'));
 
             // ✅ Message **before attachments**
-            $emailService->setMessage((string) ($email['eq_body'] ?? ""));
+            $emailService->setMessage((string) ($body ?? ""));
 
             // $debug = $emailService->printDebugger($email);
             // CLI::write("Email ID {$emailId} failed with details: " . PHP_EOL . $debug, 'yellow');
@@ -187,8 +214,6 @@ class EmailProcessor extends BaseCommand
             return ['success' => false, 'error' => $e->getMessage()];
         }
     }
-
-
 
     /**
      * Handle email sending failure

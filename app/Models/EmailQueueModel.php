@@ -17,7 +17,6 @@ class EmailQueueModel extends Model
         'eq_template_id',
         'eq_from_email',
         'eq_payload',
-        'eq_body',
         'eq_recipient_to',
         'eq_recipient_cc',
         'eq_recipient_bcc',
