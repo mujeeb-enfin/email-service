@@ -77,7 +77,7 @@ class EmailProcessor extends BaseCommand
             $this->logEmail($emailId, 'processing', 'Email processing started');
 
             // Send email
-            $result = $this->sendEmail($email);
+            $result = $this->sendEmail($email, $emailId);
 
             $result = array();
             $result['success'] = true;

@@ -143,7 +143,6 @@ class EmailQueueController extends ResourceController
             // If template provided, get template and process
             $subject = $json['eq_subject'] ?? '';
             $body = $json['eq_body'] ?? '';
-            
             if ($templateId) {
                 $template = $templateModel->find($templateId);
                 
@@ -162,6 +161,7 @@ class EmailQueueController extends ResourceController
                 'eq_template_id'    => $templateId,
                 'eq_from_email'     => $json['eq_from_email'] ?? null,
                 'eq_payload'        => json_encode($payload),
+                'eq_body'           => $body,
                 'eq_recipient_to'   => $json['eq_recipient_to'],
                 'eq_recipient_cc'   => $json['eq_recipient_cc'] ?? null,
                 'eq_recipient_bcc'  => $json['eq_recipient_bcc'] ?? null,
