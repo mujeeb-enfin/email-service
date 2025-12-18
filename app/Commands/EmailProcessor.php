@@ -68,23 +68,6 @@ class EmailProcessor extends BaseCommand
                 return;
             }
 
-            $emailTemplate =  $this->emailTemplateModel->find($emailData['eq_template_id']);
-
-            if (!empty($emailTemplate)) {
-                $body = $emailTemplate['et_body'];  // Template with placeholders
-                $variables = json_decode($emailTemplate['et_variables'], true); // ["name", "email", "company_name"]
-                $payload = json_decode($email['eq_payload'], true); // {"name":"John Doe", "email":"email2thanveer@gmail.com", "company_name":"Acme Corporation"}
-
-                if (!empty($variables) && !empty($payload)) {
-                    foreach ($variables as $var) {
-                        // Replace {{variable}} with actual value from payload
-                        $body = str_replace('{{' . $var . '}}', $payload[$var] ?? '', $body);
-                    }
-                }
-
-                $email['eq_body'] = $body;
-            }
-
             // Update status to processing
             $this->emailQueueModel->update($emailId, [
                 'eq_email_status' => 'processing'
@@ -94,7 +77,7 @@ class EmailProcessor extends BaseCommand
             $this->logEmail($emailId, 'processing', 'Email processing started');
 
             // Send email
-            $result = $this->sendEmail($email, $emailId);
+            $result = $this->sendEmail($email);
 
             $result = array();
             $result['success'] = true;
