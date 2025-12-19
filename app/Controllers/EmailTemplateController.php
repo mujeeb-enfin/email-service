@@ -32,7 +32,7 @@ class EmailTemplateController extends ResourceController
             $perPage   = (int) ($this->request->getGet('per_page') ?? 10);
             $search    = $this->request->getGet('search');
             $status    = $this->request->getGet('status');
-            $accountId = $this->request->getGet('account_id');
+            $accountId = getAccountId();
 
             // Build filters
             $filters = [];
@@ -71,35 +71,10 @@ class EmailTemplateController extends ResourceController
      * Get single email template
      * GET /api/email-templates/{id}
      */
-    public function show($id = null)
+    public function show($code = null)
     {
         try {
-            $model = new EmailTemplateModel();
-            $template = $model->find($id);
-
-            if (!$template) {
-                return $this->failNotFound('Email template not found');
-            }
-
-            return $this->respond([
-                'status' => 'success',
-                'message' => 'Email template retrieved successfully',
-                'data' => $template
-            ]);
-
-        } catch (\Exception $e) {
-            return $this->fail($e->getMessage(), 500);
-        }
-    }
-
-    /**
-     * Get template by code
-     * GET /api/email-templates/by-code/{code}
-     */
-    public function getByCode($code = null)
-    {
-        try {
-            $accountId = $this->request->getGet('account_id');
+            $accountId = getAccountId();
             $model = new EmailTemplateModel();
             $template = $model->getByCode($code, $accountId);
 
@@ -133,16 +108,17 @@ class EmailTemplateController extends ResourceController
             if (empty($json)) {
                 return $this->fail('Invalid JSON data', 400);
             }
-            
+            $accountId = getAccountId();
+
             $data = [
                 'et_template_name'      => $json['et_template_name'] ?? null,
                 'et_code'               => $json['et_code'] ?? null,
                 'et_subject'            => $json['et_subject'] ?? null,
-                'et_code_account_id'    => $json['et_code']."_".$json['et_account_id'] ?? null,
+                'et_code_account_id'    => $json['et_code']."_".$accountId ?? null,
                 'et_body'               => $json['et_body'] ?? null,
                 'et_variables'          => isset($json['et_variables']) ? json_encode($json['et_variables']) : null,
                 'et_status'             => $json['et_status'] ?? 'active',
-                'et_account_id'         => $json['et_account_id'] ?? 0,
+                'et_account_id'         => $accountId ?? 0,
                 'created_by'            => $json['created_by'] ?? null
             ];
             if ($model->insert($data)) {
@@ -165,14 +141,15 @@ class EmailTemplateController extends ResourceController
 
     /**
      * Update email template
-     * PUT /api/email-templates/{id}
+     * PUT /api/email-templates/{code}
      */
-    public function update($id = null)
+    public function update($code = null)
     {
         try {
-            $model = new EmailTemplateModel();
+            $model      = new EmailTemplateModel();
+            $accountId  = getAccountId();
             
-            $existing = $model->find($id);
+            $existing   = $model->getByCode($code, $accountId);
             if (!$existing) {
                 return $this->failNotFound('Email template not found');
             }
@@ -181,16 +158,23 @@ class EmailTemplateController extends ResourceController
             
             $data = [];
             if (isset($json['et_template_name'])) $data['et_template_name'] = $json['et_template_name'];
-            if (isset($json['et_code'])) $data['et_code'] = $json['et_code'];
             if (isset($json['et_subject'])) $data['et_subject'] = $json['et_subject'];
             if (isset($json['et_body'])) $data['et_body'] = $json['et_body'];
             if (isset($json['et_variables'])) $data['et_variables'] = json_encode($json['et_variables']);
             if (isset($json['et_status'])) $data['et_status'] = $json['et_status'];
-            if (isset($json['et_account_id'])) $data['et_account_id'] = $json['et_account_id'];
+
+            $data['et_account_id'] = $accountId;
+            
             if (isset($json['updated_by'])) $data['updated_by'] = $json['updated_by'];
 
-            if ($model->update($id, $data)) {
-                $template = $model->find($id);
+            $updated = $model
+                        ->where('et_code', $code)
+                        ->where('et_account_id', $accountId)
+                        ->set($data)
+                        ->update();
+
+            if ($updated) {
+                $template = $model->getByCode($code, $accountId);
 
                 return $this->respond([
                     'status' => 'success',
@@ -210,17 +194,25 @@ class EmailTemplateController extends ResourceController
      * Delete email template
      * DELETE /api/email-templates/{id}
      */
-    public function delete($id = null)
+    public function delete($code = null)
     {
         try {
             $model = new EmailTemplateModel();
-            
-            $existing = $model->find($id);
+            $accountId = getAccountId(); // from runtime config
+    
+            // Check if template exists
+            $existing = $model->getByCode($code, $accountId);
             if (!$existing) {
                 return $this->failNotFound('Email template not found');
             }
-
-            if ($model->delete($id)) {
+    
+            // Delete using code + accountId
+            $deleted = $model
+                ->where('et_code', $code)
+                ->where('et_account_id', $accountId)
+                ->delete();
+    
+            if ($deleted) {
                 return $this->respondDeleted([
                     'status' => 'success',
                     'message' => 'Email template deleted successfully'
@@ -228,11 +220,12 @@ class EmailTemplateController extends ResourceController
             } else {
                 return $this->fail('Failed to delete email template', 500);
             }
-
+    
         } catch (\Exception $e) {
             return $this->fail($e->getMessage(), 500);
         }
     }
+    
 
     /**
      * Get active templates only
