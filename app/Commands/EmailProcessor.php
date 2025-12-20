@@ -145,6 +145,8 @@ class EmailProcessor extends BaseCommand
     {
         CLI::write("Start processing Email ID " . $emailId, 'yellow');
 
+        $attachmentDir = null; // 👈 lazy-created only if needed
+
         try {
             $emailService = \Config\Services::email();
 
@@ -156,7 +158,7 @@ class EmailProcessor extends BaseCommand
                 'SMTPUser'    => env('SMTP_USER'),
                 'SMTPPass'    => env('SMTP_PASS'),
                 'SMTPCrypto'  => env('SMTP_CRYPTO', 'tls'),
-                'mailType'    => 'html',  // HTML type
+                'mailType'    => 'html',
                 'charset'     => 'utf-8',
                 'newline'     => "\r\n",
             ];
@@ -165,55 +167,164 @@ class EmailProcessor extends BaseCommand
             // From
             $fromEmail = $email['eq_from_email'] ?? env('SMTP_FROM_EMAIL');
             $fromName  = env('SMTP_FROM_NAME', 'System');
-            if (empty($fromEmail)) throw new \RuntimeException('From email not configured');
+            if (empty($fromEmail)) {
+                throw new \RuntimeException('From email not configured');
+            }
             $emailService->setFrom($fromEmail, $fromName);
 
             // To / CC / BCC
             $emailService->setTo($this->parseRecipients($email['eq_recipient_to']));
-            if (!empty($email['eq_recipient_cc'])) $emailService->setCC($this->parseRecipients($email['eq_recipient_cc']));
-            if (!empty($email['eq_recipient_bcc'])) $emailService->setBCC($this->parseRecipients($email['eq_recipient_bcc']));
+            if (!empty($email['eq_recipient_cc'])) {
+                $emailService->setCC($this->parseRecipients($email['eq_recipient_cc']));
+            }
+            if (!empty($email['eq_recipient_bcc'])) {
+                $emailService->setBCC($this->parseRecipients($email['eq_recipient_bcc']));
+            }
 
             // Subject
             $emailService->setSubject((string) ($email['eq_subject'] ?? 'No Subject'));
 
-            // ✅ Message **before attachments**
-            $emailService->setMessage((string) ($body ?? ""));
+            // Message (must be before attachments)
+            $emailService->setMessage((string) ($body ?? ''));
 
-            // $debug = $emailService->printDebugger($email);
-            // CLI::write("Email ID {$emailId} failed with details: " . PHP_EOL . $debug, 'yellow');
-
-            // Attachments **after** setting the message
+            // 🔹 Attachments (remote URLs only)
             if (!empty($email['eq_attachments'])) {
+
                 $attachments = json_decode($email['eq_attachments'], true);
+
                 if (is_array($attachments)) {
+
                     foreach ($attachments as $attachment) {
-                        if (is_string($attachment) && file_exists($attachment)) {
-                            $emailService->attach($attachment);
+
+                        if (filter_var($attachment, FILTER_VALIDATE_URL)) {
+
+                            // 🔸 Create folder ONLY when first attachment is needed
+                            if ($attachmentDir === null) {
+                                $attachmentDir = WRITEPATH . 'email_attachments/eq_' .
+                                    ($emailId ?: uniqid()) . '_' . date('Ymd_His') . '/';
+
+                                if (!is_dir($attachmentDir)) {
+                                    mkdir($attachmentDir, 0755, true);
+                                }
+                            }
+
+                            $tempFile = $this->downloadRemoteAttachment($attachment, $attachmentDir);
+
+                            if ($tempFile && file_exists($tempFile)) {
+                                $emailService->attach($tempFile);
+                                CLI::write("Attached file: {$tempFile}", 'cyan');
+                            }
                         }
                     }
                 }
             }
 
-            // Send
-            if ($emailService->send()) {
+            // Send email
             // if (1==1) {
-                CLI::write("Email ID " . $emailId . " sent successfully", 'green');
+            if ($emailService->send()) {
+                CLI::write("Email ID {$emailId} sent successfully", 'green');
+
                 return [
-                    'success' => true,
+                    'success'    => true,
                     'message_id' => $emailService->printDebugger(['headers']),
                 ];
             }
 
-            $debug = $emailService->printDebugger(['headers','subject','body','smtp']);
-            CLI::write("Email ID {$emailId} failed: " . PHP_EOL . $debug, 'red');
+            // Failed send
+            // $debug = $emailService->printDebugger(['headers', 'subject', 'body', 'smtp']);
+            // CLI::write("Email ID {$emailId} failed:" . PHP_EOL . $debug, 'red');
 
-            return ['success' => false, 'error' => $debug];
+            return ['success' => false, 'error' => 'Error in sending email'];
 
         } catch (\Throwable $e) {
-            CLI::write("Email ID {$emailId} failed with exception: " . $e->getMessage(), 'red');
+
+            CLI::write(
+                "Email ID {$emailId} failed with exception: " . $e->getMessage(),
+                'red'
+            );
+
             return ['success' => false, 'error' => $e->getMessage()];
+
+        } finally {
+
+            // 🔹 Cleanup attachment folder ONLY if it was created
+            if ($attachmentDir && is_dir($attachmentDir)) {
+
+                foreach (glob($attachmentDir . '*') as $file) {
+                    @unlink($file);
+                }
+
+                @rmdir($attachmentDir);
+
+                CLI::write("Cleaned attachment folder: {$attachmentDir}", 'cyan');
+            }
         }
     }
+
+    private function downloadRemoteAttachment(string $url, string $targetDir): ?string
+    {
+        // ✅ 1. Validate URL
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        // ✅ 2. Domain whitelist (VERY IMPORTANT)
+        $allowedHosts = getWhitelistedDomains();
+
+        $host = parse_url($url, PHP_URL_HOST);
+
+        if (!$host || !in_array($host, $allowedHosts, true)) {
+            CLI::write('Blocked attachment host: ' . ($host ?? 'unknown'), 'red');
+            return null;
+        }
+
+        try {
+            $client = \Config\Services::curlrequest([
+                'timeout' => 15,
+                'verify'  => true, // keep SSL verification ON
+            ]);
+
+            $response = $client->get($url);
+
+            // ✅ 3. HTTP status check
+            if ($response->getStatusCode() !== 200) {
+                return null;
+            }
+
+            // ✅ 4. File size limit (Eg 10 MB)
+            $body = $response->getBody();
+            $maxSize = getEmailAttachmentMaxSize() * 1024 * 1024;
+
+            if (strlen($body) > $maxSize) {
+                CLI::write('Attachment too large: ' . strlen($body), 'red');
+                return null;
+            }
+
+            // ✅ 5. Safe filename
+            $path     = parse_url($url, PHP_URL_PATH);
+            $filename = basename($path) ?: uniqid('attach_', true);
+
+            // prevent directory traversal & weird chars
+            $filename = preg_replace('/[^a-zA-Z0-9._-]/', '_', $filename);
+
+            // Ensure target directory exists
+            if (!is_dir($targetDir)) {
+                mkdir($targetDir, 0755, true);
+            }
+
+            $filePath = rtrim($targetDir, '/') . '/' . $filename;
+
+            file_put_contents($filePath, $body);
+
+            return $filePath;
+
+        } catch (\Throwable $e) {
+            log_message('error', 'Attachment download failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+
 
     /**
      * Handle email sending failure
