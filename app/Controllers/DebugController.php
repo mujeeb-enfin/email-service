@@ -11,7 +11,7 @@ class DebugController extends ResourceController
 
     public function current_time()
     {
-        die(date('Y-m-d H:i:s'));
+        die(getAccountId().'---'.date('Y-m-d H:i:s'));
     }
 
     public function headers()
@@ -20,6 +20,7 @@ class DebugController extends ResourceController
             
             $apiKey = $this->request->getPost('api_key');;
             $apiSecret = $this->request->getPost('api_secret');
+            $accountId = $this->request->getPost('account_id');
             $timestamp = $this->request->getPost('timestamp');
             $timestamp = $this->isValidTimestamp($timestamp) ? $timestamp : time();
 
@@ -30,8 +31,12 @@ class DebugController extends ResourceController
             if (!$apiSecret) {
                 return $this->failNotFound('APP SECRET MISSING');
             }
+
+            if ($accountId == "") {
+                return $this->failNotFound('ACCOUNT ID MISSING');
+            }
     
-            $stringToSign = $apiKey . '|' . $timestamp;
+            $stringToSign = $apiKey . '|' . $accountId . '|' . $timestamp;
             $signature = hash_hmac('sha256', $stringToSign, $apiSecret);
     
             $headers = [

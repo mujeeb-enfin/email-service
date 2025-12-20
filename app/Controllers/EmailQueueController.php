@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Models\EmailQueueModel;
 use App\Models\EmailTemplateModel;
+use App\Models\MessageBodyModel;
 use App\Libraries\RabbitMQLibrary;
 use CodeIgniter\RESTful\ResourceController;
 use CodeIgniter\API\ResponseTrait;
@@ -46,8 +47,6 @@ class EmailQueueController extends ResourceController
         }
     }
 
-
-
     /**
      * Get all email queue with pagination and filtering
      * GET /api/email-queue
@@ -62,7 +61,7 @@ class EmailQueueController extends ResourceController
             $perPage    = (int) ($this->request->getGet('per_page') ?? 10);
             $status     = $this->request->getGet('status');
             $accountId  = $this->request->getGet('account_id');
-            $templateId = $this->request->getGet('template_id');
+            $templateCode = $this->request->getGet('template_code');
             $search     = $this->request->getGet('search');
             $fromDate   = $this->request->getGet('from_date');
             $toDate     = $this->request->getGet('to_date');
@@ -71,7 +70,7 @@ class EmailQueueController extends ResourceController
             $filters = [];
             if ($status) $filters['status'] = $status;
             if ($accountId) $filters['account_id'] = $accountId;
-            if ($templateId) $filters['template_id'] = $templateId;
+            if ($templateCode) $filters['template_code'] = $templateCode;
             if ($search) $filters['search'] = $search;
             if ($fromDate) $filters['from_date'] = $fromDate;
             if ($toDate) $filters['to_date'] = $toDate;
@@ -132,68 +131,112 @@ class EmailQueueController extends ResourceController
     public function create()
     {
         try {
-            $model = new EmailQueueModel();
-            $templateModel = new EmailTemplateModel();
+            $queueModel       = new EmailQueueModel();
+            $templateModel    = new EmailTemplateModel();
+            $messageBodyModel = new MessageBodyModel();
 
             $json = $this->request->getJSON(true);
-            
-            $templateId = $json['eq_template_id'] ?? null;
-            $payload = $json['eq_payload'] ?? [];
-            
-            // If template provided, get template and process
+
+            $accountId    = $json['eq_account_id'] ?? 0;
+            $templateCode = $json['eq_template_code'] ?? null;
+            $payload      = $json['eq_payload'] ?? [];
+
+            // Subject & body
             $subject = $json['eq_subject'] ?? '';
-            $body = $json['eq_body'] ?? '';
-            
-            if ($templateId) {
-                $template = $templateModel->find($templateId);
-                
+            $body    = '';
+
+            /**
+             * Template-based email
+             */
+            if ($templateCode) {
+
+                $template = $templateModel
+                    ->where('et_code', $templateCode)
+                    ->where('et_account_id', $accountId)
+                    ->where('et_status', 'active')
+                    ->first();
+
                 if (!$template) {
                     return $this->failNotFound('Email template not found');
                 }
 
-                // Replace variables in subject and body
-                $subject = $this->replaceVariables($template['et_subject'], $payload);
-                $body = $this->replaceVariables($template['et_body'], $payload);
+                $subject = $this->replaceVariables(
+                    $template['et_subject'],
+                    $payload
+                );
+
+                $body = $this->replaceVariables(
+                    $template['et_body'],
+                    $payload
+                );
+
+            } else {
+                /**
+                 * Non-template email
+                 */
+                $body = $json['eq_body'] ?? '';
             }
 
-            // Prepare queue data
-            $data = [
-                'eq_account_id'     => $json['eq_account_id'] ?? 0,
-                'eq_template_id'    => $templateId,
-                'eq_from_email'     => $json['eq_from_email'] ?? null,
+            /**
+             * Prepare email_queue data
+             * (NO email body here)
+             */
+            $queueData = [
+                'eq_account_id'     => $accountId,
+                'eq_template_code'  => $templateCode,
+                'eq_from_email'     => $json['eq_from_email'] ?? env('SMTP_USER'),
                 'eq_payload'        => json_encode($payload),
                 'eq_recipient_to'   => $json['eq_recipient_to'],
                 'eq_recipient_cc'   => $json['eq_recipient_cc'] ?? null,
                 'eq_recipient_bcc'  => $json['eq_recipient_bcc'] ?? null,
                 'eq_subject'        => $subject,
                 'eq_scheduled_time' => $json['eq_scheduled_time'] ?? null,
-                'eq_email_status'   => isset($json['eq_scheduled_time']) ? 'scheduled' : 'pending',
-                'eq_attachments'    => isset($json['eq_attachments']) ? json_encode($json['eq_attachments']) : null,
+                'eq_email_status'   => isset($json['eq_scheduled_time'])
+                    ? 'scheduled'
+                    : 'pending',
+                'eq_attachments'    => isset($json['eq_attachments'])
+                    ? json_encode($json['eq_attachments'])
+                    : null,
                 'eq_max_retries'    => $json['eq_max_retries'] ?? 3
             ];
 
-            if ($model->insert($data)) {
-                $insertedId = $model->getInsertID();
-                $email = $model->find($insertedId);
-
-                // If not scheduled, immediately push to RabbitMQ
-                if (!isset($json['eq_scheduled_time'])) {
-                    $this->pushToQueue($email);
-                }
-
-                return $this->respondCreated([
-                    'status' => 'success',
-                    'message' => 'Email queued successfully',
-                    'data' => $email
-                ]);
-            } else {
-                return $this->fail($model->errors(), 400);
+            /**
+             * Insert into email_queue
+             */
+            if (!$queueModel->insert($queueData)) {
+                return $this->fail($queueModel->errors(), 400);
             }
+
+            $queueId = $queueModel->getInsertID();
+
+            /**
+             * Insert email body into message_body
+             */
+            $messageBodyModel->insert([
+                'email_queue_id' => $queueId,
+                'message_body'   => $body
+            ]);
+
+            $email = $queueModel->find($queueId);
+
+            /**
+             * Push to RabbitMQ if immediate
+             */
+            if (!isset($json['eq_scheduled_time'])) {
+                $this->pushToQueue($email);
+            }
+
+            return $this->respondCreated([
+                'status'  => 'success',
+                'message' => 'Email queued successfully',
+                'data'    => $email
+            ]);
 
         } catch (\Exception $e) {
             return $this->fail($e->getMessage(), 500);
         }
     }
+
 
     /**
      * Update email queue item

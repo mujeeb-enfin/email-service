@@ -19,11 +19,10 @@ $routes->group('api', ['filter' => 'apiSignature', 'namespace' => 'App\Controlle
     $routes->group('email-templates', ['namespace' => 'App\Controllers'], function($routes) {
         $routes->get('/', 'EmailTemplateController::index');
         $routes->get('active', 'EmailTemplateController::getActive');
-        $routes->get('by-code/(:segment)', 'EmailTemplateController::getByCode/$1');
-        $routes->get('(:num)', 'EmailTemplateController::show/$1');
+        $routes->get('(:any)', 'EmailTemplateController::show/$1');
         $routes->post('/', 'EmailTemplateController::create');
-        $routes->put('(:num)', 'EmailTemplateController::update/$1');
-        $routes->delete('(:num)', 'EmailTemplateController::delete/$1');
+        $routes->put('(:any)', 'EmailTemplateController::update/$1');
+        $routes->delete('(:any)', 'EmailTemplateController::delete/$1');
     });
 
     // Email Queue Routes

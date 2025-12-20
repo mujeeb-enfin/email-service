@@ -14,7 +14,7 @@ class EmailQueueModel extends Model
     protected $protectFields    = true;
     protected $allowedFields    = [
         'eq_account_id',
-        'eq_template_id',
+        'eq_template_code',
         'eq_from_email',
         'eq_payload',
         'eq_recipient_to',
@@ -132,8 +132,7 @@ class EmailQueueModel extends Model
      */
     public function getEmailWithTemplate(int $id)
     {
-        return $this->select('email_queue.*, email_templates.*')
-            ->join('email_templates', 'email_templates.id = email_queue.eq_template_id', 'left')
+        return $this->select('email_queue.*')
             ->where('email_queue.id', $id)
             ->first();
     }
@@ -151,8 +150,8 @@ class EmailQueueModel extends Model
             $builder->where('eq_account_id', $filters['account_id']);
         }
 
-        if (!empty($filters['template_id'])) {
-            $builder->where('eq_template_id', $filters['template_id']);
+        if (!empty($filters['template_code'])) {
+            $builder->where('eq_template_code', $filters['template_code']);
         }
 
         if (!empty($filters['from_date'])) {

@@ -73,6 +73,7 @@ class Filters extends BaseFilters
      */
     public array $globals = [
         'before' => [
+            'apiSignature'
             // 'honeypot',
             // 'csrf',
             // 'invalidchars',

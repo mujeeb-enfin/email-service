@@ -87,24 +87,28 @@ class EmailTemplateModel extends Model
         // Special logic for account filtering
         if (isset($filters['account_id'])) {
 
-            $accountId = (int)$filters['account_id'];
+            $accountId = (int) $filters['account_id'];
 
             if ($accountId === 0) {
                 // Case 1: Only global templates
                 $this->where('et_account_id', 0);
 
             } else {
-                // Case 2: Global templates except overridden + account-specific templates
+                /**
+                 * Subquery builder (IMPORTANT)
+                 */
+                $db = \Config\Database::connect();
+                $subBuilder = $db->table($this->table);
 
-                // Subquery: Get overridden codes
-                $subQuery = $this->select('et_code')
+                $subQuery = $subBuilder
+                    ->select('et_code')
                     ->where('et_account_id', $accountId)
                     ->getCompiledSelect();
 
                 $this->groupStart()
                     ->groupStart() // global templates except overridden
                         ->where('et_account_id', 0)
-                        ->where("et_code NOT IN ($subQuery)")
+                        ->where("et_code NOT IN ($subQuery)", null, false)
                     ->groupEnd()
                     ->orGroupStart() // account-specific templates
                         ->where('et_account_id', $accountId)
@@ -119,5 +123,6 @@ class EmailTemplateModel extends Model
 
         return $this;
     }
+
 
 }
