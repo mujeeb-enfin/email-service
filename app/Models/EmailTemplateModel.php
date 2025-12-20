@@ -124,5 +124,15 @@ class EmailTemplateModel extends Model
         return $this;
     }
 
+    public function findByCodeWithFallback(string $code, int $accountId)
+    {
+        return $this
+            ->where('et_code', $code)
+            ->where('et_status', 'active')
+            ->whereIn('et_account_id', [0, $accountId])
+            ->orderBy('et_account_id', 'DESC') // account-specific first
+            ->first();
+    }
+
 
 }

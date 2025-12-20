@@ -195,8 +195,8 @@ class EmailProcessor extends BaseCommand
             }
 
             // Send
-            // if ($emailService->send()) {
-            if (1==1) {
+            if ($emailService->send()) {
+            // if (1==1) {
                 CLI::write("Email ID " . $emailId . " sent successfully", 'green');
                 return [
                     'success' => true,

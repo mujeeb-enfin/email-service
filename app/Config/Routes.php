@@ -14,7 +14,7 @@ use CodeIgniter\Router\RouteCollection;
     $routes->post('headers', 'DebugController::headers');
 });
 
-$routes->group('api', ['filter' => 'apiSignature', 'namespace' => 'App\Controllers'], function($routes) {
+$routes->group('api', ['namespace' => 'App\Controllers'], function($routes) {
     // Email Template Routes
     $routes->group('email-templates', ['namespace' => 'App\Controllers'], function($routes) {
         $routes->get('/', 'EmailTemplateController::index');

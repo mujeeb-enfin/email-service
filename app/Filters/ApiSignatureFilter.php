@@ -58,9 +58,9 @@ class ApiSignatureFilter implements FilterInterface
         $config->accountId = (int) $app['aa_account_id'];
         
         // Update last used time
-        $model->update($app['aa_id'], [
-            'aa_last_used_at' => date('Y-m-d H:i:s')
-        ]);
+        // $model->update($app['aa_id'], [
+        //     'aa_last_used_at' => date('Y-m-d H:i:s')
+        // ]);
 
         return;
     }

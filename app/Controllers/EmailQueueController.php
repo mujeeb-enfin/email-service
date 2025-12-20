@@ -60,11 +60,19 @@ class EmailQueueController extends ResourceController
             $page       = (int) ($this->request->getGet('page') ?? 1);
             $perPage    = (int) ($this->request->getGet('per_page') ?? 10);
             $status     = $this->request->getGet('status');
-            $accountId  = $this->request->getGet('account_id');
             $templateCode = $this->request->getGet('template_code');
             $search     = $this->request->getGet('search');
             $fromDate   = $this->request->getGet('from_date');
             $toDate     = $this->request->getGet('to_date');
+
+            $accountId  = $this->request->getGet('account_id');
+            //only root account has the access to check with different acocunt id
+            if(!isRootAccount())
+            {
+                $accountId = getAccountId();
+            }
+            
+
 
             // Build filters
             $filters = [];
@@ -138,6 +146,12 @@ class EmailQueueController extends ResourceController
             $json = $this->request->getJSON(true);
 
             $accountId    = $json['eq_account_id'] ?? 0;
+            //only root account has the access to check with different acocunt id
+            if(!isRootAccount())
+            {
+                $accountId = getAccountId();
+            }
+            
             $templateCode = $json['eq_template_code'] ?? null;
             $payload      = $json['eq_payload'] ?? [];
 
@@ -150,11 +164,7 @@ class EmailQueueController extends ResourceController
              */
             if ($templateCode) {
 
-                $template = $templateModel
-                    ->where('et_code', $templateCode)
-                    ->where('et_account_id', $accountId)
-                    ->where('et_status', 'active')
-                    ->first();
+                $template = $templateModel->findByCodeWithFallback($templateCode, $accountId);
 
                 if (!$template) {
                     return $this->failNotFound('Email template not found');

@@ -11,7 +11,7 @@ class DebugController extends ResourceController
 
     public function current_time()
     {
-        die(getAccountId().'---'.date('Y-m-d H:i:s'));
+        die(date('Y-m-d H:i:s'));
     }
 
     public function headers()
